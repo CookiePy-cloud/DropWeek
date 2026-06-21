@@ -3,7 +3,7 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:dropweek/supabase_client.dart';
 import 'package:dropweek/models/todo.dart';
 import 'package:dropweek/services/todo_service.dart';
-import 'package:dropweek/screens/onboarding_screen.dart';
+import 'package:dropweek/screens/login_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -17,12 +17,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final _newTodoController = TextEditingController();
   List<Todo> _todos = [];
   bool _loading = true;
-  String? _userId;
+
+  String? get _userId =>
+      SupabaseClientManager.client.auth.currentSession?.user.id;
 
   @override
   void initState() {
     super.initState();
-    _userId = SupabaseClientManager.client.auth.currentUser?.id;
     _loadTodos();
   }
 
@@ -33,34 +34,62 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _loadTodos() async {
-    if (_userId == null) return;
-    final todos = await _todoService.getTodos(_userId!);
-    if (!mounted) return;
-    setState(() {
-      _todos = todos;
-      _loading = false;
-    });
+    final userId = _userId;
+    if (userId == null) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      return;
+    }
+    try {
+      final todos = await _todoService.getTodos(userId);
+      if (!mounted) return;
+      setState(() {
+        _todos = todos;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      ShadToaster.of(context).show(
+        ShadToast.destructive(title: Text('Error loading: $e')),
+      );
+    }
   }
 
   Future<void> _addTodo() async {
     final title = _newTodoController.text.trim();
-    if (title.isEmpty || _userId == null) return;
+    final userId = _userId;
+    if (title.isEmpty || userId == null) return;
 
     _newTodoController.clear();
-    final todo = await _todoService.addTodo(_userId!, title);
-    if (!mounted) return;
-    setState(() => _todos.insert(0, todo));
+    try {
+      final todo = await _todoService.addTodo(userId, title);
+      if (!mounted) return;
+      setState(() => _todos.insert(0, todo));
+    } catch (e) {
+      if (!mounted) return;
+      ShadToaster.of(context).show(
+        ShadToast.destructive(title: Text('Error adding: $e')),
+      );
+    }
   }
 
   Future<void> _toggleTodo(Todo todo) async {
-    await _todoService.toggleTodo(todo.id!, !todo.completed);
-    if (!mounted) return;
-    setState(() {
-      final index = _todos.indexWhere((t) => t.id == todo.id);
-      if (index != -1) {
-        _todos[index] = todo.copyWith(completed: !todo.completed);
-      }
-    });
+    try {
+      await _todoService.toggleTodo(todo.id!, !todo.completed);
+      if (!mounted) return;
+      setState(() {
+        final index = _todos.indexWhere((t) => t.id == todo.id);
+        if (index != -1) {
+          _todos[index] = todo.copyWith(completed: !todo.completed);
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ShadToaster.of(context).show(
+        ShadToast.destructive(title: Text('Error: $e')),
+      );
+    }
   }
 
   Future<void> _editTodo(Todo todo) async {
@@ -68,20 +97,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final result = await showDialog<String>(
       context: context,
       builder: (ctx) => ShadDialog(
-        title: const Text('Aufgabe bearbeiten'),
+        title: const Text('Edit task'),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             ShadInput(
               controller: controller,
-              placeholder: const Text('Aufgabe'),
+              placeholder: const Text('Task'),
             ),
             const SizedBox(height: 16),
             Align(
               alignment: Alignment.centerRight,
               child: ShadButton(
                 onPressed: () => Navigator.of(ctx).pop(controller.text),
-                child: const Text('Speichern'),
+                child: const Text('Save'),
               ),
             ),
           ],
@@ -90,29 +119,44 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
 
     if (result != null && result.trim().isNotEmpty && todo.id != null) {
-      await _todoService.updateTodoTitle(todo.id!, result.trim());
-      if (!mounted) return;
-      setState(() {
-        final index = _todos.indexWhere((t) => t.id == todo.id);
-        if (index != -1) {
-          _todos[index] = todo.copyWith(title: result.trim());
-        }
-      });
+      try {
+        await _todoService.updateTodoTitle(todo.id!, result.trim());
+        if (!mounted) return;
+        setState(() {
+          final index = _todos.indexWhere((t) => t.id == todo.id);
+          if (index != -1) {
+            _todos[index] = todo.copyWith(title: result.trim());
+          }
+        });
+      } catch (e) {
+        if (!mounted) return;
+        ShadToaster.of(context).show(
+          ShadToast.destructive(title: Text('Error: $e')),
+        );
+      }
     }
   }
 
   Future<void> _deleteTodo(Todo todo) async {
     if (todo.id == null) return;
-    await _todoService.deleteTodo(todo.id!);
-    if (!mounted) return;
-    setState(() => _todos.removeWhere((t) => t.id == todo.id));
+    try {
+      await _todoService.deleteTodo(todo.id!);
+      if (!mounted) return;
+      setState(() => _todos.removeWhere((t) => t.id == todo.id));
+    } catch (e) {
+      if (!mounted) return;
+      ShadToaster.of(context).show(
+        ShadToast.destructive(title: Text('Error: $e')),
+      );
+    }
   }
 
   Future<void> _logout() async {
     await SupabaseClientManager.client.auth.signOut();
     if (!mounted) return;
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const OnboardingScreen()),
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (_) => false,
     );
   }
 
@@ -129,7 +173,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('DropWeek'),
+        title: const Text('DropWeek'),
         actions: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -162,12 +206,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ),
                       const SizedBox(height: 16),
                       Text(
-                        'Keine Aufgaben vorhanden',
+                        'No tasks yet',
                         style: theme.textTheme.h4,
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'Füge deine erste Aufgabe hinzu',
+                        'Add your first task',
                         style: theme.textTheme.p,
                       ),
                     ],
@@ -222,7 +266,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
           child: ShadInput(
             controller: _newTodoController,
-            placeholder: const Text('Neue Aufgabe hinzufügen...'),
+            placeholder: const Text('Add a new task...'),
             trailing: ShadButton(
               size: ShadButtonSize.sm,
               onPressed: _addTodo,
